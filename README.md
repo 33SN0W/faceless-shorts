@@ -126,6 +126,12 @@ python3 "$SKILL/scripts/analytics.py" log-video .
    ./scripts/py scripts/youtube_upload.py pig-war-1859 timothy-dexter-fortune --publish-at 2026-11-12T18:00:00Z --stagger-hours 24
    ```
 
+### 4. Local Pre-Render Studio Dashboard (`scripts/studio_ui.py`)
+Inspect projects, edit scripts, audition Kokoro voices, review safe-zone contact sheets, inspect 5-axis QA scores, monitor background render jobs, and trigger 1-click Private uploads in your browser (`127.0.0.1`):
+```bash
+./scripts/py scripts/studio_ui.py --open
+```
+
 See [`docs/INVOCATION_GUIDE.md`](docs/INVOCATION_GUIDE.md) and [`docs/AUDIT_AND_ARCHITECTURE.md`](docs/AUDIT_AND_ARCHITECTURE.md) for detailed prompt patterns, style recipes, and empirical audit notes.
 
 ---
@@ -158,6 +164,7 @@ faceless-shorts/
 │   ├── qa_check.py            # Automated 5-axis QA gatekeeper (0–100)
 │   ├── analytics.py           # Local retention log, Studio metric import & recommendations
 │   ├── youtube_upload.py      # Resumable OAuth 2.0 YouTube Shorts batch uploader
+│   ├── studio_ui.py           # Local web UI for script editing, Kokoro audition & QA/upload
 │   └── selftest.sh            # Regression suite across all 6 formats + studio tooling
 └── styles/
     ├── _shared/               # art_style.js, capture.mjs, mix.py, main_2d.js, main_3d.js, fonts

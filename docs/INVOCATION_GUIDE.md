@@ -115,3 +115,14 @@ Place your Google Cloud Desktop OAuth 2.0 JSON at `~/.faceless-shorts/youtube_cl
 ./scripts/py scripts/youtube_upload.py pig-war-1859 timothy-dexter-fortune \
   --publish-at 2026-11-12T18:00:00Z --stagger-hours 24
 ```
+
+---
+
+## 6. Local Pre-Render Review & Control Web UI (`scripts/studio_ui.py`)
+
+Launch the local loopback studio dashboard (`http://127.0.0.1:8765/`) to switch between 3 hooks, edit `script.json` cuts and captions, audition Kokoro voices live, inspect `review/all.jpg` safe-zone contact sheets, scrub MP4 previews, inspect 5-axis QA scores, track background jobs, and trigger 1-click Private uploads:
+
+```bash
+./scripts/py scripts/studio_ui.py --open
+./scripts/py scripts/studio_ui.py --self-test   # Loopback HTTP API smoke test
+```

@@ -40,6 +40,7 @@ done
   python3 "$SKILL/scripts/studio.py" metadata "$T/tall-tale" >/dev/null || exit 1
   "$PY" "$SKILL/scripts/qa_check.py" "$T/tall-tale" --min-score 40 >/dev/null || exit 1
   python3 "$SKILL/scripts/analytics.py" summary --json >/dev/null || exit 1
+  "$PY" "$SKILL/scripts/studio_ui.py" --projects-dir "$T" --self-test >/dev/null || exit 1
   cd "$T/tall-tale" && node tools/capture.mjs check --art-style comic-art --safe-zones | grep -q "CHECK OK" || exit 1
   cd "$T/deep-dive" && node tools/capture.mjs check --art-style glow-sketch | grep -q "CHECK OK" || exit 1
 ) >> "$LOG" 2>&1 && note "studio-suite" "ok · studio.py + qa_check.py + analytics.py + art-style overrides" || { note "studio-suite" "FAILED (see $LOG)"; fail=1; }

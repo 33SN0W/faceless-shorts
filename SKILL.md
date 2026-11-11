@@ -106,6 +106,7 @@ python3 "$SKILL/scripts/studio.py" metadata "$PROJ"
 python3 "$SKILL/scripts/analytics.py" log-video "$PROJ"
 ```
 Fix any QA blockers (`black_frames_detected`, `silent_audio`, `wrong_aspect_ratio`, `banned_or_empty_hook`) before presenting or uploading.
+To review hooks, edit `script.json` cuts, audition Kokoro voices, inspect `review/all.jpg`, check QA scores, and upload visually in a browser, launch `"$SKILL/scripts/py" "$SKILL/scripts/studio_ui.py" --open`.
 If Zapier / YouTube publishing is configured and the user explicitly asks to upload, present `metadata.json` (`title_options`, `description`, `ai_synthetic_disclosure`) and upload after user confirmation. For local batch uploads directly from Mac via YouTube Data API v3 (using `~/.faceless-shorts/youtube_client_secrets.json` OAuth without external hosting), use `"$SKILL/scripts/py" "$SKILL/scripts/youtube_upload.py" <project...>` (supports `--dry-run`, `--auth-only`, `--privacy`, and `--publish-at` / `--stagger-hours`; see `docs/INVOCATION_GUIDE.md` Section 5).
 
 ---
