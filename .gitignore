@@ -1,0 +1,31 @@
+# macOS / Editors
+.DS_Store
+._*
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Python / Node caches & environments
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+node_modules/
+
+# Credentials, tokens & upload receipts (always stored outside git in ~/.faceless-shorts/)
+.env
+.env.*
+*client_secret*.json
+*client_secrets*.json
+*youtube_token*.json
+upload_receipt.json
+
+# Generated project artifacts & scratch renders
+renders/
+review/
+_selftest/
+*.mp4
+*.mov
+*.wav
