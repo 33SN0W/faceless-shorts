@@ -6,6 +6,21 @@ A modular, research-driven, **`$0.00` local-compute production studio and YouTub
 
 ---
 
+## Product Design (Product Manager Perspective)
+
+Built for a solo creator scaling a factual/storytelling Shorts channel (`33SN0W`, `ShortsDaily`), the product removes three structural bottlenecks common in AI video tools:
+
+1. **Zero Variable COGS (`$0.00 / Video`):** SaaS stacks charge per voice minute, render credit, and prompt token. Moving TTS (`Kokoro-82M`), subtitle alignment (`Faster-Whisper small.en`), procedural animation (`Chrome + FFmpeg`), and YouTube upload (`videos.insert` quota) locally turns content experimentation into a fixed `$0.00` marginal cost loop.
+2. **Defeating Policy Risk & Channel Fatigue:** Uploading TTS over scraped gameplay invites copyright claims (*Reused Content*) and rigid single-template automation risks YouTube *Inauthentic Content* demonetization. Decoupling **6 Narrative Formats** from **13 Art Styles** plus requiring corroborated sources enforces visual and factual originality on every upload.
+3. **Human-in-the-Loop Without Friction:** Pre-render hook selection, live Kokoro audition, a mobile Safe-Zone framing guide (`x: 70–940, y: 280–1470`), and one-click private YouTube staging catch quality/compliance mistakes before consuming upload quota.
+
+- **North Star Signals:** `Viewed vs. Swiped Away` (`>= 70%`), `Average % Viewed` (`>= 90%`), `Shares/Saves per 1k Engaged Views`, balanced against `100/100` QA pass rates and `$0` cost.
+- **UI/UX Craft:** The Studio dashboard (`scripts/studio_ui.py`) blends **Apple dark graphite glass** with restrained visual craft inspired by **Linear** (near-black obsidian surface ladder, hairline Bento tiles, `⌘K` command palette), **Stripe** (subtle ambient aurora glow behind crisp ink), **Tailwind CSS** (radial-masked blueprint grid lines), and **Cuberto** (cursor spotlight sheen and spring micro-transitions).
+
+Read the full PM specification in [`docs/PRODUCT_DESIGN.md`](docs/PRODUCT_DESIGN.md).
+
+---
+
 ## Key Capabilities
 
 ### 1. Independent Formats (`6`) × Art Styles (`13` + `default`)
@@ -126,13 +141,17 @@ python3 "$SKILL/scripts/analytics.py" log-video .
    ./scripts/py scripts/youtube_upload.py pig-war-1859 timothy-dexter-fortune --publish-at 2026-11-12T18:00:00Z --stagger-hours 24
    ```
 
-### 4. Local Pre-Render Studio Dashboard (`scripts/studio_ui.py`)
-Inspect projects, edit scripts, audition Kokoro voices, review safe-zone contact sheets, inspect 5-axis QA scores, monitor background render jobs, and trigger 1-click Private uploads in your browser (`127.0.0.1`):
+### 4. Local Studio Web UI (`scripts/studio_ui.py`)
+Visual creator dashboard (`127.0.0.1:8765`) with four focused workspaces and `⌘K` command navigation:
+- **Create:** Idea prompt + Genre filter pills (`History`, `Horror & Mysteries`, `Weird Events`, `Scams & Loopholes`, `Science & Body`, `Survival`, `Empires & Battles`) + batch draft count (`1–5`).
+- **Review:** Watchable `9:16` player with toggleable **Mobile Safe-Zone Guide**, plain-English readiness checks, Kokoro voice audition, editable hooks/scenes, storyboard sheet zoom, and verified source URL manager.
+- **Upload:** Choose `1..N` or `All` ready videos and upload privately or on a staggered daily schedule in 1 click.
+- **Product ("The ProdMan Way"):** Live quota & portfolio telemetry, PM funnel Bento cards, and YouTube Studio retention logging (`analytics.py`).
 ```bash
 ./scripts/py scripts/studio_ui.py --open
 ```
 
-See [`docs/INVOCATION_GUIDE.md`](docs/INVOCATION_GUIDE.md) and [`docs/AUDIT_AND_ARCHITECTURE.md`](docs/AUDIT_AND_ARCHITECTURE.md) for detailed prompt patterns, style recipes, and empirical audit notes.
+See [`docs/PRODUCT_DESIGN.md`](docs/PRODUCT_DESIGN.md), [`docs/INVOCATION_GUIDE.md`](docs/INVOCATION_GUIDE.md), and [`docs/AUDIT_AND_ARCHITECTURE.md`](docs/AUDIT_AND_ARCHITECTURE.md) for product strategy, prompt recipes, and empirical audit notes.
 
 ---
 
@@ -144,6 +163,7 @@ faceless-shorts/
 ├── README.md                  # System overview, architecture, cost model & setup
 ├── docs/
 │   ├── system_design.png      # End-to-end 4-stage architecture diagram
+│   ├── PRODUCT_DESIGN.md      # PM vision, JTBD funnel, tradeoffs & UI craft
 │   ├── AUDIT_AND_ARCHITECTURE.md
 │   └── INVOCATION_GUIDE.md
 ├── formats/                   # 6 storytelling format specifications

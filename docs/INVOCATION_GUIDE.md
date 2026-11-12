@@ -118,9 +118,13 @@ Place your Google Cloud Desktop OAuth 2.0 JSON at `~/.faceless-shorts/youtube_cl
 
 ---
 
-## 6. Local Pre-Render Review & Control Web UI (`scripts/studio_ui.py`)
+## 6. Local Apple/Linear-Styled Studio Web UI (`scripts/studio_ui.py`)
 
-Launch the local loopback studio dashboard (`http://127.0.0.1:8765/`) to switch between 3 hooks, edit `script.json` cuts and captions, audition Kokoro voices live, inspect `review/all.jpg` safe-zone contact sheets, scrub MP4 previews, inspect 5-axis QA scores, track background jobs, and trigger 1-click Private uploads:
+Launch the local loopback studio dashboard (`http://127.0.0.1:8765/`) across four clean workspaces (**Create** · **Review** · **Upload** · **Product**) plus `⌘K` spotlight navigation:
+- Prompt ideas & pick genre filters (`History`, `Horror & Mysteries`, `Weird Events`, `Scams`, `Science`, `Survival`, `Empires`)
+- Audition Kokoro voices, switch hooks, edit scenes & verified citations, and inspect the live `9:16` **Mobile Safe-Zone Guide**
+- Batch upload `1`, `2`, `3`, `5`, `All`, or any custom count of Shorts directly to YouTube
+- View **"The ProdMan Way"** telemetry, format mix, daily quota %, and log real Studio retention numbers (`analytics.py`)
 
 ```bash
 ./scripts/py scripts/studio_ui.py --open

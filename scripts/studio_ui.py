@@ -566,6 +566,94 @@ def build_job_steps(action: str, proj: Path, payload: dict) -> list[tuple[str, l
     raise ValueError(f"Unsupported action: {action!r}")
 
 
+def compute_insights(projects_dir: Path) -> dict:
+    """Aggregate live channel KPIs, format distribution, today's upload quota & analytics coaching."""
+    items = list_projects(projects_dir)
+    today_prefix = datetime.date.today().isoformat()
+    uploads_today = 0
+    format_counts: dict[str, int] = {}
+    qa_vals = []
+    for it in items:
+        fmt = it.get("format") or "unknown"
+        format_counts[fmt] = format_counts.get(fmt, 0) + 1
+        if isinstance(it.get("qa_score"), (int, float)):
+            qa_vals.append(float(it["qa_score"]))
+        rec = read_json(projects_dir / it["slug"] / "upload_receipt.json", {})
+        if str(rec.get("uploaded_at") or "").startswith(today_prefix):
+            uploads_today += 1
+
+    rec_res = subprocess.run(
+        [sys.executable, str(SKILL_DIR / "scripts" / "analytics.py"), "recommend", "--json"],
+        capture_output=True, text=True,
+    )
+    rec_json = {}
+    if rec_res.returncode == 0 and rec_res.stdout.strip():
+        try:
+            rec_json = json.loads(rec_res.stdout)
+        except Exception:
+            rec_json = {}
+
+    return {
+        "total_projects": len(items),
+        "rendered_count": sum(1 for x in items if x.get("has_mp4")),
+        "ready_to_upload_count": sum(1 for x in items if x.get("has_mp4") and not x.get("uploaded")),
+        "uploaded_count": sum(1 for x in items if x.get("uploaded")),
+        "uploads_today": uploads_today,
+        "quota_pct_today": min(100, uploads_today),
+        "avg_qa_score": round(sum(qa_vals) / len(qa_vals), 1) if qa_vals else None,
+        "format_counts": format_counts,
+        "recommendations": rec_json.get("recommendations", []),
+        "confidence": rec_json.get("confidence", "baseline"),
+        "top_performing_pattern": rec_json.get("top_performing_pattern"),
+    }
+
+
+def update_project_research(proj: Path, sources: list[dict], verified: bool) -> dict:
+    """Save verified source URLs to research.json and refresh metadata.json descriptions."""
+    clean_sources = []
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        url = str(src.get("url") or "").strip()
+        title = str(src.get("title") or "").strip() or "Source Reference"
+        if url and (url.startswith("http://") or url.startswith("https://")) and "example.org" not in url:
+            clean_sources.append({"title": title, "url": url, "tier": "primary"})
+
+    rp = proj / "research.json"
+    research = read_json(rp, {"topic": proj.name.replace("-", " ").title(), "slug": proj.name})
+    claims = research.get("claims") or [{"claim": research.get("topic") or proj.name, "confidence": "verified", "sources": []}]
+    claims[0]["sources"] = clean_sources
+    claims[0]["confidence"] = "verified" if (verified and len(clean_sources) >= 1) else "pending"
+    research["claims"] = claims
+    research["verification_status"] = "verified" if (verified and len(clean_sources) >= 2) else ("partial" if clean_sources else "pending")
+    rp.write_text(json.dumps(research, indent=2) + "\n")
+    subprocess.run([sys.executable, str(SKILL_DIR / "scripts" / "studio.py"), "metadata", str(proj)], capture_output=True)
+    return research
+
+
+def import_project_metrics(proj: Path, payload: dict) -> dict:
+    """Persist real YouTube Studio metrics via analytics.py and return updated coaching."""
+    views = max(0, int(payload.get("views") or 0))
+    stayed = max(0.0, min(100.0, float(payload.get("stayed_to_watch") or 0.0)))
+    apv = max(0.0, min(300.0, float(payload.get("avg_pct_viewed") or 0.0)))
+    shares = max(0, int(payload.get("shares") or 0))
+    saves = max(0, int(payload.get("saves") or 0))
+    subprocess.run([sys.executable, str(SKILL_DIR / "scripts" / "analytics.py"), "log-video", str(proj)], capture_output=True)
+    cmd = [
+        sys.executable, str(SKILL_DIR / "scripts" / "analytics.py"), "import-metrics", proj.name,
+        "--views", str(views),
+        "--stayed-to-watch", str(stayed),
+        "--avg-pct-viewed", str(apv),
+        "--shares", str(shares),
+        "--saves", str(saves),
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        raise RuntimeError((res.stderr or res.stdout).strip())
+    rec = subprocess.run([sys.executable, str(SKILL_DIR / "scripts" / "analytics.py"), "recommend", "--json"], capture_output=True, text=True)
+    return {"updated": proj.name, "recommendation": json.loads(rec.stdout) if rec.returncode == 0 and rec.stdout.strip() else {}}
+
+
 HTML_PAGE = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -574,41 +662,84 @@ HTML_PAGE = r"""<!DOCTYPE html>
   <title>33SN0W Studio</title>
   <style>
     :root {
-      --bg: #000000;
-      --bg-glow: radial-gradient(circle at 50% -10%, #1c1c1e 0%, #000000 58%);
-      --glass: rgba(24, 24, 27, 0.78);
-      --surface-1: #111113;
-      --surface-2: #1c1c1e;
-      --surface-3: #2c2c2e;
-      --hairline: rgba(255, 255, 255, 0.09);
+      --bg: #08090a;
+      --glass: rgba(15, 16, 18, 0.78);
+      --surface-1: #0f1012;
+      --surface-2: #17181c;
+      --surface-3: #22242a;
+      --hairline: rgba(255, 255, 255, 0.08);
       --hairline-strong: rgba(255, 255, 255, 0.16);
-      --text: #f5f5f7;
-      --text-2: #a1a1a6;
-      --text-3: #6e6e73;
+      --text: #f7f8f8;
+      --text-2: #9ba1a6;
+      --text-3: #62666d;
       --blue: #0a84ff;
       --blue-hover: #2d95ff;
+      --indigo: #5e6ad2;
+      --cyan: #00d4ff;
       --green: #30d158;
       --amber: #ff9f0a;
       --red: #ff453a;
       --radius-lg: 20px;
       --radius-md: 14px;
       --radius-sm: 10px;
-      --ease: cubic-bezier(0.22, 1, 0.36, 1);
+      --ease: cubic-bezier(0.16, 1, 0.3, 1);
     }
     * { box-sizing: border-box; }
     html, body {
       margin: 0;
       min-height: 100%;
       background: var(--bg);
-      background-image: var(--bg-glow);
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
       font-size: 14px;
       line-height: 1.48;
       -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
     }
 
-    /* Sticky frosted Apple toolbar */
+    /* Tailwind blueprint grid + Stripe atmospheric aurora (restrained obsidian dark) */
+    .bg-grid {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background-image:
+        linear-gradient(to right, rgba(255, 255, 255, 0.032) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.032) 1px, transparent 1px);
+      background-size: 36px 36px;
+      mask-image: radial-gradient(ellipse 85% 65% at 50% 8%, #000 25%, transparent 100%);
+      -webkit-mask-image: radial-gradient(ellipse 85% 65% at 50% 8%, #000 25%, transparent 100%);
+    }
+    .bg-aurora {
+      position: fixed;
+      top: -180px;
+      left: 50%;
+      width: min(1150px, 110vw);
+      height: 440px;
+      transform: translateX(-50%);
+      pointer-events: none;
+      z-index: 0;
+      background:
+        radial-gradient(circle at 24% 48%, rgba(94, 106, 210, 0.16), transparent 55%),
+        radial-gradient(circle at 54% 38%, rgba(0, 212, 255, 0.11), transparent 52%),
+        radial-gradient(circle at 78% 54%, rgba(168, 85, 247, 0.12), transparent 55%);
+      filter: blur(72px);
+      animation: auroraDrift 18s ease-in-out infinite alternate;
+    }
+    @keyframes auroraDrift {
+      0% { transform: translateX(-50%) translateY(0) scale(1); }
+      100% { transform: translateX(-48%) translateY(18px) scale(1.06); }
+    }
+    @keyframes viewIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .view-anim { animation: viewIn 260ms var(--ease); }
+    @media (prefers-reduced-motion: reduce) {
+      .bg-aurora, .view-anim, * { animation: none !important; transition-duration: 0.01ms !important; }
+    }
+
+    /* Sticky frosted Apple/Linear toolbar */
     .topbar {
       position: sticky;
       top: 0;
@@ -629,14 +760,14 @@ HTML_PAGE = r"""<!DOCTYPE html>
       gap: 10px;
       font-weight: 600;
       font-size: 15px;
-      letter-spacing: -0.015em;
+      letter-spacing: -0.02em;
     }
     .brand-dot {
       width: 10px;
       height: 10px;
       border-radius: 50%;
-      background: linear-gradient(135deg, #f5f5f7, #8e8e93);
-      box-shadow: 0 0 12px rgba(255,255,255,0.28);
+      background: linear-gradient(135deg, #f7f8f8, #5e6ad2);
+      box-shadow: 0 0 14px rgba(94, 106, 210, 0.55);
     }
     .segmented {
       display: inline-flex;
@@ -715,21 +846,83 @@ HTML_PAGE = r"""<!DOCTYPE html>
     .badge.warn { color: var(--amber); border-color: rgba(255,159,10,0.3); background: rgba(255,159,10,0.1); }
     .badge.live { color: var(--blue); border-color: rgba(10,132,255,0.35); background: rgba(10,132,255,0.12); }
 
-    .container { max-width: 1240px; margin: 0 auto; padding: 26px 24px 64px; }
+    .container { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; padding: 26px 24px 72px; }
     .card {
+      position: relative;
       background: var(--surface-1);
       border: 1px solid var(--hairline);
       border-radius: var(--radius-lg);
       padding: 22px;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+      overflow: hidden;
     }
+    .card::before, .bento-tile::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: radial-gradient(620px circle at var(--mx, 50%) var(--my, 0%), rgba(94, 106, 210, 0.10), transparent 44%);
+      opacity: 0;
+      transition: opacity 260ms var(--ease);
+    }
+    .card:hover::before, .bento-tile:hover::before { opacity: 1; }
+    .bento-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .bento-tile {
+      position: relative;
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      overflow: hidden;
+      transition: border-color 180ms var(--ease), transform 180ms var(--ease);
+    }
+    .bento-tile:hover { border-color: var(--hairline-strong); transform: translateY(-1px); }
+    .kpi-val { font-size: 26px; font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; margin-top: 4px; }
+    .kpi-lbl { font-size: 12px; color: var(--text-2); font-weight: 600; }
+    .phone-stage { position: relative; border-radius: 18px; overflow: hidden; }
+    .safe-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      display: none;
+    }
+    .safe-overlay.on { display: block; }
+    .safe-zone-box {
+      position: absolute;
+      left: 6.5%; right: 13%; top: 14.5%; bottom: 23.4%;
+      border: 1.5px dashed rgba(48, 209, 88, 0.85);
+      border-radius: 10px;
+      box-shadow: 0 0 0 999px rgba(255, 69, 58, 0.18);
+    }
+    .safe-tag {
+      position: absolute; top: 6px; left: 8px;
+      background: rgba(8,9,10,0.82); color: var(--green);
+      font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 6px;
+    }
+    dialog.cmd-modal {
+      background: rgba(15, 16, 18, 0.94);
+      backdrop-filter: blur(28px);
+      color: var(--text);
+      border: 1px solid var(--hairline-strong);
+      border-radius: 18px;
+      padding: 0;
+      width: min(560px, 92vw);
+      box-shadow: 0 32px 72px rgba(0,0,0,0.78);
+    }
+    dialog.cmd-modal::backdrop { background: rgba(0,0,0,0.62); }
+    .cmd-item {
+      width: 100%; text-align: left; border: 0; background: transparent; color: var(--text);
+      padding: 10px 16px; display: flex; justify-content: space-between; align-items: center;
+      cursor: pointer; font-size: 13.5px; border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .cmd-item:hover { background: rgba(94, 106, 210, 0.16); }
     .card-subtle {
       background: var(--surface-2);
       border: 1px solid var(--hairline);
       border-radius: var(--radius-md);
       padding: 16px;
     }
-    h2 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.025em; }
+    h2 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.03em; }
     h3 { margin: 0 0 12px; font-size: 16px; font-weight: 600; letter-spacing: -0.015em; }
     .subtitle { margin: 6px 0 0; color: var(--text-2); font-size: 14px; }
 
@@ -909,6 +1102,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
   </style>
 </head>
 <body>
+<div class="bg-grid"></div>
+<div class="bg-aurora"></div>
 
 <header class="topbar">
   <div class="brand">
@@ -919,8 +1114,10 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <button class="seg-btn active" data-view="create">Create</button>
     <button class="seg-btn" data-view="review">Review</button>
     <button class="seg-btn" data-view="upload">Upload</button>
+    <button class="seg-btn" data-view="product">Product</button>
   </nav>
   <div class="top-right">
+    <button type="button" class="btn quiet" id="cmdBtn" style="padding:5px 12px;font-size:12px;">⌘K</button>
     <span id="ytChannelPill" class="badge">YouTube Checking…</span>
   </div>
 </header>
@@ -1019,9 +1216,19 @@ HTML_PAGE = r"""<!DOCTYPE html>
         </div>
 
         <div class="review-hero">
-          <!-- Left: Watchable Phone Preview -->
-          <div class="phone-frame">
-            <div id="phoneMedia"></div>
+          <!-- Left: Watchable Phone Preview with Safe-Zone Overlay Toggle -->
+          <div>
+            <div class="phone-frame">
+              <div class="phone-stage">
+                <div id="phoneMedia"></div>
+                <div id="safeOverlay" class="safe-overlay">
+                  <div class="safe-zone-box"><span class="safe-tag">Mobile Safe Area</span></div>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;justify-content:center;margin-top:10px;">
+              <button type="button" class="btn quiet" id="toggleSafeZoneBtn" style="font-size:12px;padding:6px 14px;">Show Safe Zone Guide</button>
+            </div>
           </div>
 
           <!-- Right: Normal Creator-Friendly Story & Voice Editor -->
@@ -1082,6 +1289,11 @@ HTML_PAGE = r"""<!DOCTYPE html>
                 <h3 style="margin:0;">Fact Sources &amp; Caption Preview</h3>
                 <span id="rvVerifyBadge" class="badge">Checking…</span>
               </div>
+              <div id="rvSourcesList" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;"></div>
+              <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+                <button type="button" class="btn quiet" id="rvAddSrcBtn" style="padding:5px 12px;font-size:12px;">+ Add Source</button>
+                <button type="button" class="btn" id="rvSaveSrcBtn" style="padding:5px 14px;font-size:12px;">Save &amp; Mark Verified</button>
+              </div>
               <div id="rvMetaDesc" style="color:var(--text-2);font-size:13px;white-space:pre-wrap;background:var(--surface-2);padding:12px;border-radius:10px;border:1px solid var(--hairline);">—</div>
             </div>
           </div>
@@ -1137,7 +1349,99 @@ HTML_PAGE = r"""<!DOCTYPE html>
     </div>
   </section>
 
+  <!-- VIEW 4: PRODUCT & SYSTEM TELEMETRY ("The ProdMan Way") -->
+  <section id="view-product" style="display:none;">
+    <div style="display:flex;flex-direction:column;gap:18px;">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;">
+          <div>
+            <h2>The ProdMan Way: Strategy, Unit Economics &amp; Telemetry</h2>
+            <p class="subtitle">How every step protects retention, originality, mobile ergonomics, and $0 unit economics.</p>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <span class="badge ok">$0.00 / Video COGS</span>
+            <span class="badge live">Anti-Vanity Retention Loop</span>
+          </div>
+        </div>
+
+        <div class="bento-grid" id="pmKpiGrid" style="margin-top:18px;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));"></div>
+      </div>
+
+      <div class="card">
+        <h3>End-to-End Product Architecture</h3>
+        <p class="subtitle" style="margin:-4px 0 14px;font-size:13px;">Built around creator Jobs-to-be-Done — eliminating SaaS subscriptions, template fatigue, and Reused Content risk.</p>
+        <div class="bento-grid" style="grid-template-columns:repeat(auto-fit,minmax(310px,1fr));">
+          <div class="bento-tile">
+            <span class="badge live">1 · Ideate &amp; Filter</span>
+            <h3 style="margin:10px 0 6px;font-size:14.5px;">Originality First</h3>
+            <p style="margin:0;color:var(--text-2);font-size:13px;">Deduplicates against existing Shorts before production and matches each niche (Horror, History, Scams) to distinct visual worlds.</p>
+          </div>
+          <div class="bento-tile">
+            <span class="badge live">2 · Voice &amp; Hook</span>
+            <h3 style="margin:10px 0 6px;font-size:14.5px;">3-Second Retention Gate</h3>
+            <p style="margin:0;color:var(--text-2);font-size:13px;">3 non-cliché hook tests + instant Kokoro-82M voice audition prevent slow intros and robotic narration before rendering starts.</p>
+          </div>
+          <div class="bento-tile">
+            <span class="badge live">3 · Visual Variety</span>
+            <h3 style="margin:10px 0 6px;font-size:14.5px;">6 Formats × 13 Looks</h3>
+            <p style="margin:0;color:var(--text-2);font-size:13px;">Original procedural 2D Canvas &amp; 3D WebGL worlds with zero scraped gameplay — preventing YouTube Inauthentic Content demonetization.</p>
+          </div>
+          <div class="bento-tile">
+            <span class="badge live">4 · Safe-Zone QA</span>
+            <h3 style="margin:10px 0 6px;font-size:14.5px;">Ergonomic Framing</h3>
+            <p style="margin:0;color:var(--text-2);font-size:13px;">Enforces caption &amp; character safe lanes clear of YT Shorts / IG Reels buttons, loudness normalized (-19 dBFS), and 5-axis verified.</p>
+          </div>
+          <div class="bento-tile">
+            <span class="badge live">5 · Batch Deploy</span>
+            <h3 style="margin:10px 0 6px;font-size:14.5px;">Local OAuth Vault</h3>
+            <p style="margin:0;color:var(--text-2);font-size:13px;">Secrets stay locked offline (<code style="color:var(--text);">0600</code>). Resumable 4 MB uploads stage Private Shorts for clean human flip.</p>
+          </div>
+          <div class="bento-tile">
+            <span class="badge ok">6 · Learn Loop</span>
+            <h3 style="margin:10px 0 6px;font-size:14.5px;">True Retention Signal</h3>
+            <p style="margin:0;color:var(--text-2);font-size:13px;">Weights Viewed %, Avg % Viewed, and Shares/Saves per 1k instead of vanity views to steer future topics.</p>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px;">
+        <div class="card">
+          <h3>Portfolio Diversity &amp; Coaching</h3>
+          <div id="pmFormatBars" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;"></div>
+          <div id="pmCoachBox" class="card-subtle" style="font-size:13px;color:var(--text-2);">Loading insights…</div>
+        </div>
+
+        <div class="card">
+          <h3>Log YouTube Studio Performance</h3>
+          <p class="subtitle" style="margin:-4px 0 12px;font-size:12.5px;">Paste numbers from YouTube Studio to feed the retention recommender.</p>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div style="grid-column:span 2;">
+              <label class="lbl">Video</label>
+              <select id="pmSlugSelect"></select>
+            </div>
+            <div><label class="lbl">Views</label><input type="text" id="pmViews" placeholder="12500" /></div>
+            <div><label class="lbl">Stayed to Watch (%)</label><input type="text" id="pmStayed" placeholder="72.4" /></div>
+            <div><label class="lbl">Avg % Viewed</label><input type="text" id="pmApv" placeholder="94.0" /></div>
+            <div><label class="lbl">Shares</label><input type="text" id="pmShares" placeholder="180" /></div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;margin-top:14px;">
+            <button type="button" class="btn primary" id="pmSaveMetricsBtn">Save Studio Metrics</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
 </div>
+
+<!-- Linear-style Cmd+K Command Palette -->
+<dialog id="cmdModal" class="cmd-modal">
+  <div style="padding:14px 16px;border-bottom:1px solid var(--hairline);display:flex;gap:10px;align-items:center;">
+    <span class="badge">⌘K</span>
+    <input type="text" id="cmdInput" placeholder="Jump to any Short, switch workspace, or trigger an action…" style="border:0;background:transparent;padding:4px 0;font-size:14.5px;" />
+  </div>
+  <div id="cmdList" style="max-height:340px;overflow-y:auto;"></div>
+</dialog>
 
 <!-- Non-intrusive floating progress pill -->
 <div id="statusToast" class="status-strip">
@@ -1184,13 +1488,17 @@ async function api(url, opts = {}) {
 function switchView(v) {
   app.view = v;
   document.querySelectorAll(".seg-btn").forEach((b) => b.classList.toggle("active", b.dataset.view === v));
-  ["create", "review", "upload"].forEach((k) => {
-    $(`view-${k}`).style.display = k === v ? "block" : "none";
+  ["create", "review", "upload", "product"].forEach((k) => {
+    const sec = $(`view-${k}`);
+    sec.style.display = k === v ? "block" : "none";
+    sec.classList.toggle("view-anim", k === v);
   });
   if (v === "upload") renderUploadCards();
+  if (v === "product") loadInsights();
 }
 
 async function init() {
+  bindSpotlight();
   const [meta, vdata] = await Promise.all([api("/api/filters"), api("/api/voices")]);
   app.filters = meta.filters || [];
   app.looks = meta.looks || [];
@@ -1205,7 +1513,17 @@ async function init() {
   await refreshLibrary();
   updateOAuthBadge();
   const qv = new URLSearchParams(window.location.search).get("view");
-  if (qv && ["create", "review", "upload"].includes(qv)) switchView(qv);
+  if (qv && ["create", "review", "upload", "product"].includes(qv)) switchView(qv);
+}
+
+function bindSpotlight() {
+  document.addEventListener("mousemove", (e) => {
+    const target = e.target.closest(".card, .bento-tile");
+    if (!target) return;
+    const rect = target.getBoundingClientRect();
+    target.style.setProperty("--mx", `${e.clientX - rect.left}px`);
+    target.style.setProperty("--my", `${e.clientY - rect.top}px`);
+  });
 }
 
 function renderCreateControls() {
@@ -1316,6 +1634,98 @@ async function loadProject(slug) {
   $("rvVerifyBadge").textContent = d.verified_sources ? "Sources Verified" : "Draft";
   $("rvVerifyBadge").className = "badge " + (d.verified_sources ? "ok" : "warn");
   $("rvMetaDesc").textContent = yt ? `${yt.recommended_title}\n\n${yt.description}` : "Save & Render to generate YouTube title, sources, and hashtags.";
+  renderSourcesEditor(d.sources_list || []);
+}
+
+function renderSourcesEditor(sources) {
+  const box = $("rvSourcesList");
+  box.innerHTML = "";
+  const list = sources.length ? sources : [{ title: "", url: "" }];
+  app.detail.sources_list = list;
+  list.forEach((src, i) => {
+    const row = document.createElement("div");
+    row.style.cssText = "display:grid;grid-template-columns:1fr 1.6fr auto;gap:8px;align-items:center;";
+    row.innerHTML = `
+      <input type="text" value="${esc(src.title || "")}" placeholder="Source (e.g. Britannica)" />
+      <input type="text" value="${esc(src.url || "")}" placeholder="https://…" />
+      <button type="button" class="btn quiet" style="padding:5px 10px;">×</button>`;
+    const [tIn, uIn, del] = row.children;
+    tIn.oninput = () => { src.title = tIn.value; };
+    uIn.oninput = () => { src.url = uIn.value; };
+    del.onclick = () => { list.splice(i, 1); renderSourcesEditor(list); };
+    box.appendChild(row);
+  });
+}
+
+async function loadInsights() {
+  const ins = await api("/api/insights");
+  const kpis = [
+    ["Total Videos", ins.total_projects],
+    ["Rendered MP4s", ins.rendered_count],
+    ["On YouTube", ins.uploaded_count],
+    ["Today's Upload Quota", `${ins.quota_pct_today}% of 100`],
+    ["Avg Quality Score", ins.avg_qa_score != null ? `${ins.avg_qa_score}/100` : "—"],
+    ["Cost / Video", "$0.00"],
+  ];
+  $("pmKpiGrid").innerHTML = kpis.map(([lbl, val]) => `
+    <div class="bento-tile">
+      <div class="kpi-lbl">${esc(lbl)}</div>
+      <div class="kpi-val">${esc(val)}</div>
+    </div>`).join("");
+
+  const fmts = Object.entries(ins.format_counts || {}).sort((a, b) => b[1] - a[1]);
+  const maxC = Math.max(1, ...fmts.map(([, c]) => c));
+  $("pmFormatBars").innerHTML = fmts.map(([fmt, cnt]) => `
+    <div>
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px;">
+        <span>${esc(fmt.replace("-", " "))}</span><span style="color:var(--text-2);">${cnt}</span>
+      </div>
+      <div style="height:6px;background:var(--surface-2);border-radius:999px;overflow:hidden;">
+        <div style="height:100%;width:${Math.round(cnt / maxC * 100)}%;background:linear-gradient(90deg,var(--indigo),var(--blue));border-radius:999px;"></div>
+      </div>
+    </div>`).join("");
+
+  const recs = ins.recommendations || [];
+  $("pmCoachBox").innerHTML = recs.length
+    ? recs.map((r) => `<div style="margin-bottom:6px;">• ${esc(r)}</div>`).join("")
+    : "Publish Shorts and log YouTube Studio numbers to unlock data-backed recommendations.";
+
+  $("pmSlugSelect").innerHTML = app.projects.map((p) => `<option value="${esc(p.slug)}">${esc(p.title)}</option>`).join("");
+}
+
+function openCmdPalette() {
+  const modal = $("cmdModal");
+  $("cmdInput").value = "";
+  renderCmdList("");
+  modal.showModal();
+  $("cmdInput").focus();
+}
+
+function renderCmdList(query) {
+  const q = query.trim().toLowerCase();
+  const actions = [
+    { label: "Create New Video Prompt", hint: "Create Tab", run: () => switchView("create") },
+    { label: "Review Videos & Voices", hint: "Review Tab", run: () => switchView("review") },
+    { label: "Batch Upload to YouTube", hint: "Upload Tab", run: () => switchView("upload") },
+    { label: "The ProdMan Way & Insights", hint: "Product Tab", run: () => switchView("product") },
+    { label: "Toggle Mobile Safe Zone Guide", hint: "Review", run: () => { switchView("review"); $("toggleSafeZoneBtn").click(); } },
+  ];
+  const vidItems = app.projects.slice(0, 12).map((p) => ({
+    label: p.title,
+    hint: p.uploaded ? "On YouTube" : p.has_mp4 ? "Ready" : "Draft",
+    run: async () => { await loadProject(p.slug); switchView("review"); },
+  }));
+  const all = [...actions, ...vidItems].filter((x) => !q || `${x.label} ${x.hint}`.toLowerCase().includes(q));
+  const box = $("cmdList");
+  box.innerHTML = "";
+  all.slice(0, 10).forEach((item) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "cmd-item";
+    b.innerHTML = `<span>${esc(item.label)}</span><span class="badge">${esc(item.hint)}</span>`;
+    b.onclick = async () => { $("cmdModal").close(); await item.run(); };
+    box.appendChild(b);
+  });
 }
 
 function renderHooks(hooks) {
@@ -1605,6 +2015,55 @@ $("upRunBatchBtn").onclick = async () => {
   watchJob(job.id, `Uploading ${slugs.length} Video(s)`);
 };
 
+$("toggleSafeZoneBtn").onclick = () => {
+  const ov = $("safeOverlay");
+  const on = ov.classList.toggle("on");
+  $("toggleSafeZoneBtn").textContent = on ? "Hide Safe Zone Guide" : "Show Safe Zone Guide";
+};
+$("rvAddSrcBtn").onclick = () => {
+  app.detail.sources_list = app.detail.sources_list || [];
+  app.detail.sources_list.push({ title: "", url: "" });
+  renderSourcesEditor(app.detail.sources_list);
+};
+$("rvSaveSrcBtn").onclick = async () => {
+  if (!app.activeSlug) return;
+  await api("/api/project/research", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slug: app.activeSlug, sources: app.detail.sources_list || [], verified: true }),
+  });
+  showToast("Sources Saved", "Updated research citations & YouTube description.", "ok", 2600);
+  await refreshLibrary(app.activeSlug);
+};
+$("pmSaveMetricsBtn").onclick = async () => {
+  const slug = $("pmSlugSelect").value;
+  if (!slug) return;
+  await api("/api/metrics", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      slug,
+      views: Number($("pmViews").value || 0),
+      stayed_to_watch: Number($("pmStayed").value || 0),
+      avg_pct_viewed: Number($("pmApv").value || 0),
+      shares: Number($("pmShares").value || 0),
+    }),
+  });
+  showToast("Metrics Logged", "Updated Studio retention strategy.", "ok", 2600);
+  await loadInsights();
+};
+
+$("cmdBtn").onclick = openCmdPalette;
+$("cmdInput").oninput = () => renderCmdList($("cmdInput").value);
+$("cmdModal").onclick = (e) => { if (e.target === $("cmdModal")) $("cmdModal").close(); };
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    if ($("cmdModal").open) $("cmdModal").close();
+    else openCmdPalette();
+  }
+});
+
 init().catch((e) => showToast("Setup Note", e.message, "warn"));
 </script>
 </body>
@@ -1699,12 +2158,16 @@ def make_handler(projects_dir: Path, jobs: JobManager):
                     self._send_json(200, {"projects": list_projects(projects_dir)})
                     return
 
+                if parsed.path == "/api/insights":
+                    self._send_json(200, compute_insights(projects_dir))
+                    return
+
                 if parsed.path == "/api/project":
                     slug = (qs.get("slug") or [""])[0]
                     proj = resolve_project_dir(projects_dir, slug)
                     info = summarize_project(proj)
                     research = read_json(proj / "research.json", {})
-                    src_count = sum(len(c.get("sources", [])) for c in research.get("claims", []))
+                    src_list = [s for c in research.get("claims", []) for s in c.get("sources", []) if s.get("url") and "example.org" not in s.get("url", "")]
                     self._send_json(200, {
                         **info,
                         "script": read_json(proj / "script.json", {}),
@@ -1712,7 +2175,9 @@ def make_handler(projects_dir: Path, jobs: JobManager):
                         "qa": read_json(proj / "review" / "qa_report.json", {}),
                         "metadata": read_json(proj / "metadata.json", {}),
                         "receipt": read_json(proj / "upload_receipt.json", {}),
-                        "sources_count": src_count,
+                        "research": research,
+                        "sources_list": src_list,
+                        "sources_count": len(src_list),
                     })
                     return
 
@@ -1785,6 +2250,20 @@ def make_handler(projects_dir: Path, jobs: JobManager):
                     self._send_json(200, {"saved": True, "script_check": run_script_check(proj)})
                     return
 
+                if parsed.path == "/api/project/research":
+                    slug = body.get("slug", "")
+                    proj = resolve_project_dir(projects_dir, slug)
+                    updated = update_project_research(proj, body.get("sources") or [], bool(body.get("verified", True)))
+                    self._send_json(200, {"saved": True, "research": updated})
+                    return
+
+                if parsed.path == "/api/metrics":
+                    slug = body.get("slug", "")
+                    proj = resolve_project_dir(projects_dir, slug)
+                    out = import_project_metrics(proj, body)
+                    self._send_json(200, out)
+                    return
+
                 if parsed.path == "/api/voice/audition":
                     wav_bytes = synthesize_kokoro_wav(body.get("text", ""), body.get("voice", "am_michael"), body.get("speed", 1.0))
                     self.send_response(200)
@@ -1847,6 +2326,9 @@ def run_self_test(projects_dir: Path) -> None:
 
         flt = json.loads(urllib.request.urlopen(f"{base}/api/filters").read().decode("utf-8"))
         assert len(flt["filters"]) >= 7 and any(x["id"] == "horror" for x in flt["filters"])
+
+        ins = json.loads(urllib.request.urlopen(f"{base}/api/insights").read().decode("utf-8"))
+        assert "total_projects" in ins and "quota_pct_today" in ins
 
         voices = json.loads(urllib.request.urlopen(f"{base}/api/voices").read().decode("utf-8"))
         assert len(voices["voices"]) >= 8
